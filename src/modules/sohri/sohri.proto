@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package sohri;
+
+import "google/protobuf/empty.proto";
+
+// The CareCallEventService service definition.
+service CareCallEventService {
+  // The event request method.
+  rpc eventRequest(EventRequest) returns (EventResponse);
+  // The audio stream method.
+  rpc audioStream(stream AudioStreamRequest) returns (stream AudioStreamResponse);
+  // The delivery stream method.
+  rpc deliveryStream(google.protobuf.Empty) returns (stream DeliveryResponse);
+  // The error stream method.
+  rpc errorStream(google.protobuf.Empty) returns (stream ErrorResponse);
+}
+
+// The event request message.
+message EventRequest {
+  enum ActionEvent {
+    TURN_START = 10;   // Indicates that the user has started recording audio.
+    TURN_PAUSE = 11;   // Indicates that the audio recording is paused.
+    TURN_RESUME = 12;  // Indicates that the audio recording is resumed.
+    TURN_END = 13;     // Indicates that the audio recording has ended.
+  }
+  ActionEvent event = 1;  // The event that occurred.
+}
+
+// The event response message.
+message EventResponse {
+  string turnId = 1;  // The generated turn identifier.
+}
+
+// The content chunk request message.
+// Removed dialogId field.
+message AudioStreamRequest {
+  string turnId = 1;    // Turn identifier.
+  bytes content = 2;    // File content.
+  uint32 ttsStatus = 3; // TTS status.
+}
+
+// The content response message.
+message AudioStreamResponse {
+  enum Status {
+    PAUSE = 0;    // Paused state.
+    END = 1;      // Ended state.
+    SPEECH = 2;   // Speech data state.
+    TIMEOUT = 8;  // Timeout state.
+    ERROR = 9;    // Error state.
+  }
+  Status status = 1;  // Response status.
+}
+
+// The delivery response message.
+message DeliveryResponse {
+  enum Action {
+    SPEECH_TO_TEXT = 0;  // Speech-to-text conversion.
+  }
+  Action action = 1;       // Action type.
+  string turnId = 2;       // Turn identifier.
+  SpeechContent speech = 3; // Speech recognition result and related information.
+}
+
+// The speech content message.
+message SpeechContent {
+  string text = 1;       // Recognized text.
+  AudioInfo audio = 2;   // Audio related information.
+}
+
+// The audio information message.
+message AudioInfo {
+  double duration = 1;   // Audio duration.
+  uint32 sampleRate = 2; // Sample rate.
+  uint32 channels = 3;   // Number of channels.
+}
+
+// The error response message.
+message ErrorResponse {
+  uint32 code = 1;      // Error code.
+  string message = 2;   // Error message.
+  string reason = 3;    // Error reason.
+}
