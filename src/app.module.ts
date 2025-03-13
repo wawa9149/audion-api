@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { STTModule } from './modules/stt/stt.module';
+import { SohriModule } from './modules/sohri/sohri.module';
 
 @Module({
-  imports: [STTModule],
+  imports: [SohriModule],
 })
 export class AppModule { }

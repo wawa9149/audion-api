@@ -7,13 +7,13 @@ async function bootstrap() {
   const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
     transport: Transport.GRPC,
     options: {
-      package: 'stt',
-      protoPath: join(__dirname, 'modules/stt/stt.proto'),
-      url: '0.0.0.0:50051',
+      package: 'sohri', // Updated package name
+      protoPath: join(__dirname, 'modules/sohri/sohri.proto'),
+      url: '0.0.0.0:3000',
     },
   });
 
   await app.listen();
-  console.log('gRPC Microservice is running on: 0.0.0.0:50051');
+  console.log('gRPC Microservice is running on: 0.0.0.0:3000');
 }
 bootstrap();
