@@ -19,6 +19,44 @@ enum AudioStreamResponseStatus {
   ERROR = 9,
 }
 
+function pcmToWav(
+  pcmBuffer: Buffer,
+  sampleRate: number,
+  channels: number,
+  bitsPerSample: number
+): Buffer {
+  const byteRate = sampleRate * channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+  const dataSize = pcmBuffer.length;
+  const headerSize = 44;
+  const fileSize = dataSize + headerSize - 8; // RIFF 헤더에 기록되는 파일 크기
+
+  const header = Buffer.alloc(headerSize);
+  let offset = 0;
+
+  // RIFF Chunk Descriptor
+  header.write('RIFF', offset); offset += 4;
+  header.writeUInt32LE(fileSize, offset); offset += 4;
+  header.write('WAVE', offset); offset += 4;
+
+  // fmt 서브청크
+  header.write('fmt ', offset); offset += 4;
+  header.writeUInt32LE(16, offset); offset += 4; // Subchunk1Size: PCM은 16
+  header.writeUInt16LE(1, offset); offset += 2;  // AudioFormat: PCM은 1
+  header.writeUInt16LE(channels, offset); offset += 2;
+  header.writeUInt32LE(sampleRate, offset); offset += 4;
+  header.writeUInt32LE(byteRate, offset); offset += 4;
+  header.writeUInt16LE(blockAlign, offset); offset += 2;
+  header.writeUInt16LE(bitsPerSample, offset); offset += 2;
+
+  // data 서브청크
+  header.write('data', offset); offset += 4;
+  header.writeUInt32LE(dataSize, offset); offset += 4;
+
+  return Buffer.concat([header, pcmBuffer]);
+}
+
+
 @Injectable()
 export class SohriService {
   private readonly logger = new Logger(SohriService.name);
@@ -141,7 +179,6 @@ export class SohriService {
     }
     // PCM 데이터가 이미 동기적으로 파일에 기록되었으므로 추가 누적은 필요 없음.
     this.logger.log(`PCM data saved to file: ${this.tempFile}`);
-    await this.sendSpeechResponse(this.currentTurnId, true, false);
   }
 
   // 상태별 공통 처리 함수
@@ -159,32 +196,29 @@ export class SohriService {
     this.audioResponseSubject.next({ status });
   }
 
-  // PCM -> WAV 변환 함수: ffmpeg를 사용하여 실제 변환 수행
+  // PCM -> WAV 변환 함수 (직접 WAV 헤더를 달아서 변환)
   private async convertTurnWavFile(turnId: string, isEnd: boolean): Promise<string> {
     const wavDir = process.env.WAV_DIR || '/tmp/wav';
-    const datePath = new Date().toISOString().split('T')[0]; // 예: "2025-03-16"
-    const wavFile = path.join(wavDir, datePath, path.basename(this.tempFile) + '.wav');
+    const datePath = new Date().toISOString().split('T')[0]; // 예: "2025-03-17"
+    const baseName = path.basename(this.tempFile, '.pcm');
+    const wavFile = path.join(wavDir, datePath, baseName + '.wav');
     const wavDirFull = path.dirname(wavFile);
     if (!fs.existsSync(wavDirFull)) {
       fs.mkdirSync(wavDirFull, { recursive: true });
       this.logger.log(`WAV directory created: ${wavDirFull}`);
     }
-    this.logger.log(`Converting PCM to WAV: ${this.tempFile} -> ${wavFile} (isEnd: ${isEnd})`);
-    return new Promise<string>((resolve, reject) => {
-      ffmpeg(this.tempFile)
-        .inputFormat('s16le')
-        .audioFrequency(16000)
-        .audioChannels(1)
-        .on('end', () => {
-          this.logger.log(`PCM successfully converted to WAV: ${wavFile}`);
-          resolve(wavFile);
-        })
-        .on('error', (err: any) => {
-          this.logger.error(`Error converting PCM to WAV: ${err.message}`);
-          reject(err);
-        })
-        .save(wavFile);
-    });
+    this.logger.log(`Converting PCM to WAV manually: ${this.tempFile} -> ${wavFile}`);
+    try {
+      const pcmData = fs.readFileSync(this.tempFile);
+      // PCM 데이터의 스펙: 16000 Hz, 1 채널, 16-bit
+      const wavBuffer = pcmToWav(pcmData, 16000, 1, 16);
+      fs.writeFileSync(wavFile, wavBuffer);
+      this.logger.log(`PCM successfully converted to WAV: ${wavFile}`);
+      return wavFile;
+    } catch (err: any) {
+      this.logger.error(`Error converting PCM to WAV manually: ${err.message}`);
+      throw err;
+    }
   }
 
   // 음성 응답 전송 함수: WAV 파일을 multipart/form-data 형식으로 HTTP POST 요청
