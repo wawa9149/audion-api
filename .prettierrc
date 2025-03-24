@@ -5,7 +5,7 @@
   "useTabs": false,
   "tabWidth": 2,
   "printWidth": 80,
-  "bracketSpacing": true,
+  "bracketSpacing": false,
   "arrowParens": "always",
   "endOfLine": "auto"
 }

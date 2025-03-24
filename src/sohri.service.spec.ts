@@ -1,10 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
-import * as fs from 'fs';
 import * as path from 'path';
 import * as ffmpeg from 'fluent-ffmpeg';
-import axios from 'axios';
-import * as FormData from 'form-data';
 
 // 시스템 ffmpeg 경로 (환경변수 FFMPEG_PATH 또는 기본값)
 ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || '/usr/bin/ffmpeg');
@@ -18,12 +15,13 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   defaults: true,
   oneofs: true,
 });
-const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any;
-const sohriPackage = protoDescriptor.sohri;
+const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
+// Explicitly cast sohriPackage to the correct type
+const sohriPackage = protoDescriptor.sohri as any;
 
 // 단순 지연 함수 (밀리초 단위)
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -51,17 +49,18 @@ function extractAudioSamples(filePath: string): Promise<Buffer> {
 describe('SohriService gRPC Tests', () => {
   let client: any;
   let currentTurnId: string = '';
-
   beforeAll(() => {
     // gRPC 클라이언트 생성 (서버는 localhost:3000에서 실행 중이어야 함)
     client = new sohriPackage.CareCallEventService(
       'localhost:3000',
-      grpc.credentials.createInsecure()
+      grpc.credentials.createInsecure(),
     );
   });
 
   afterAll(() => {
-    if (client && client.close) { client.close(); }
+    if (client && client.close) {
+      client.close();
+    }
   });
 
   test('should send all audio data with restart on END or TIMEOUT', async () => {
@@ -103,11 +102,16 @@ describe('SohriService gRPC Tests', () => {
             if (restartRequested && currentChunk < numChunks) {
               console.log('Restart condition met. Sending TURN_END event.');
               await new Promise((resolve, reject) => {
-                client.eventRequest({ event: 13 }, (err: any, response: any) => {
-                  if (err) return reject(err);
-                  console.log('TURN_END event processed, turnId:', response.turnId);
-                  resolve(response.turnId);
-                });
+                client.eventRequest(
+                  { event: 13 },
+                  (err: any, response: any) => {
+                    if (err) return reject(err);
+                    console.log(
+                      'TURN_END event processed, turnId:',
+                      response.turnId,
+                    );
+                    resolve(response.turnId);
+                  });
               });
 
               restartRequested = false;
@@ -115,14 +119,15 @@ describe('SohriService gRPC Tests', () => {
               await delay(500);
 
               currentTurnId = await new Promise((resolve, reject) => {
-                client.eventRequest({ event: 10 }, (err: any, response: any) => {
-                  if (err) return reject(err);
-                  resolve(response.turnId);
-                });
+                client.eventRequest(
+                  { event: 10 },
+                  (err: any, response: any) => {
+                    if (err) return reject(err);
+                    resolve(response.turnId);
+                  });
               });
               console.log('New turnId received:', currentTurnId);
             }
-
           }
         });
 
@@ -144,14 +149,18 @@ describe('SohriService gRPC Tests', () => {
           ttsStatus: 0,
         };
         call.write(request);
-        console.log(`Sent chunk ${currentChunk + 1}/${numChunks} on current stream`);
+        console.log(
+          `Sent chunk ${currentChunk + 1}/${numChunks} on current stream`,
+        );
         currentChunk++;
         await delay(500);
       }
 
       call.end();
       await streamPromise;
-      console.log(`Stream responses for current stream: ${JSON.stringify(responses)}`);
+      console.log(
+        `Stream responses for current stream: ${JSON.stringify(responses)}`,
+      );
       allResponses.push(...responses);
     }
 
@@ -172,4 +181,3 @@ describe('SohriService gRPC Tests', () => {
     expect(allResponses.length).toBeGreaterThan(0);
   }, 60000);
 });
-

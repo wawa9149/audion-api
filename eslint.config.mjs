@@ -30,6 +30,8 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'warn',
       '@typescript-eslint/no-unsafe-argument': 'warn',
+      '@typescript-eslint/object-curly-spacing': ['error', 'never'], // ✅ {} 내부 공백 방지
+      'prettier/prettier': 'error', // ✅ ESLint에서 Prettier 오류 감지
       'no-console': 'warn', // console.log() 사용 시 경고
     },
   },

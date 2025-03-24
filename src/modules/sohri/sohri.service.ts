@@ -23,10 +23,10 @@ function pcmToWav(
   pcmBuffer: Buffer,
   sampleRate: number,
   channels: number,
-  bitsPerSample: number
+  bitsPerSample: number,
 ): Buffer {
-  const byteRate = sampleRate * channels * bitsPerSample / 8;
-  const blockAlign = channels * bitsPerSample / 8;
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
   const dataSize = pcmBuffer.length;
   const headerSize = 44;
   const fileSize = dataSize + headerSize - 8; // RIFF 헤더에 기록되는 파일 크기
@@ -35,62 +35,79 @@ function pcmToWav(
   let offset = 0;
 
   // RIFF Chunk Descriptor
-  header.write('RIFF', offset); offset += 4;
-  header.writeUInt32LE(fileSize, offset); offset += 4;
-  header.write('WAVE', offset); offset += 4;
+  header.write('RIFF', offset);
+  offset += 4;
+  header.writeUInt32LE(fileSize, offset);
+  offset += 4;
+  header.write('WAVE', offset);
+  offset += 4;
 
   // fmt 서브청크
-  header.write('fmt ', offset); offset += 4;
-  header.writeUInt32LE(16, offset); offset += 4; // Subchunk1Size: PCM은 16
-  header.writeUInt16LE(1, offset); offset += 2;  // AudioFormat: PCM은 1
-  header.writeUInt16LE(channels, offset); offset += 2;
-  header.writeUInt32LE(sampleRate, offset); offset += 4;
-  header.writeUInt32LE(byteRate, offset); offset += 4;
-  header.writeUInt16LE(blockAlign, offset); offset += 2;
-  header.writeUInt16LE(bitsPerSample, offset); offset += 2;
+  header.write('fmt ', offset);
+  offset += 4;
+  header.writeUInt32LE(16, offset);
+  offset += 4; // Subchunk1Size: PCM은 16
+  header.writeUInt16LE(1, offset);
+  offset += 2; // AudioFormat: PCM은 1
+  header.writeUInt16LE(channels, offset);
+  offset += 2;
+  header.writeUInt32LE(sampleRate, offset);
+  offset += 4;
+  header.writeUInt32LE(byteRate, offset);
+  offset += 4;
+  header.writeUInt16LE(blockAlign, offset);
+  offset += 2;
+  header.writeUInt16LE(bitsPerSample, offset);
+  offset += 2;
 
   // data 서브청크
-  header.write('data', offset); offset += 4;
-  header.writeUInt32LE(dataSize, offset); offset += 4;
+  header.write('data', offset);
+  offset += 4;
+  header.writeUInt32LE(dataSize, offset);
+  offset += 4;
 
   return Buffer.concat([header, pcmBuffer]);
 }
-
 
 @Injectable()
 export class SohriService {
   private readonly logger = new Logger(SohriService.name);
   private currentTurnId: string = '';
-  private wsClient: WebSocket | null = null;
+  private wsClient: WebSocket;
   // 임시 PCM 데이터를 저장할 파일 경로 (순수 오디오 데이터만 기록)
   private tempFile: string = '';
   // WebSocket으로 받은 상태를 전달할 Subject
-  private audioResponseSubject: Subject<{ status: AudioStreamResponseStatus }> = new Subject();
+  private audioResponseSubject: Subject<{ status: AudioStreamResponseStatus }> =
+    new Subject();
   private deliverySubject: Subject<any> = new Subject();
 
   // TURN 이벤트 처리: TURN_START, TURN_END, TURN_PAUSE, TURN_RESUME
   handleEvent(eventRequest: { event: number }): string {
-    if (eventRequest.event === 10) { // TURN_START
+    // TURN_START
+    if (eventRequest.event === 10) {
       this.currentTurnId = uuidv4();
       this.logger.log(`Turn started: ${this.currentTurnId}`);
       const tempDir = process.env.TEMP_DIR || '/tmp';
-      // 파일 이름에 .pcm 확장자를 추가하여 순수 PCM 데이터를 저장
-      this.tempFile = path.join(tempDir, uuidv4() + '.pcm');
+      // turn_id에 .pcm 확장자를 추가하여 순수 PCM 데이터를 저장
+      this.tempFile = path.join(tempDir, this.currentTurnId + '.pcm');
       const dir = path.dirname(this.tempFile);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
         this.logger.log(`Directory created: ${dir}`);
       }
-      this.createWebSocketClient(this.currentTurnId);
+      this.createWebSocketClient();
       return this.currentTurnId;
-    } else if (eventRequest.event === 13) { // TURN_END
+      // TURN_END
+    } else if (eventRequest.event === 13) {
       this.logger.log(`Turn ended: ${this.currentTurnId}`);
       this.processTurnEnd();
       return this.currentTurnId;
-    } else if (eventRequest.event === 11) { // TURN_PAUSE
+      // TURN_PAUSE
+    } else if (eventRequest.event === 11) {
       this.logger.log('Turn paused');
       return this.currentTurnId;
-    } else if (eventRequest.event === 12) { // TURN_RESUME
+      // TURN_RESUME
+    } else if (eventRequest.event === 12) {
       this.logger.log('Turn resumed');
       return this.currentTurnId;
     }
@@ -98,8 +115,8 @@ export class SohriService {
   }
 
   // WebSocket 클라이언트 생성 및 연결
-  createWebSocketClient(turnId: string): void {
-    const wsUrl = 'ws://epd.mago52.com:9707/speech2text/chunk';
+  createWebSocketClient(): void {
+    const wsUrl = 'ws://sohri.mago52.com:9707/';
     this.wsClient = new WebSocket(wsUrl);
     this.wsClient.on('open', () => {
       this.logger.log('WebSocket connected');
@@ -151,7 +168,11 @@ export class SohriService {
   // 오디오 청크 처리:
   // 1. 각 오디오 청크는 파일에 동기적으로 기록 (TTS 상태 바이트 제외)
   // 2. WebSocket 전송 시에는 TTS 상태 바이트를 붙여 전송
-  async processAudioBuffer(data: { turnId: string, content: Buffer, ttsStatus: number }): Promise<void> {
+  processAudioBuffer(data: {
+    turnId: string;
+    content: Buffer;
+    ttsStatus: number;
+  }): void {
     // 동기적으로 파일에 순수 오디오 데이터만 기록
     this.writeToFile(data.content);
 
@@ -159,7 +180,9 @@ export class SohriService {
     const ttsBuffer = Buffer.from([data.ttsStatus]);
     const bufferToSend = Buffer.concat([ttsBuffer, data.content]);
     this.logger.log(`Received audio chunk with TTS status: ${data.ttsStatus}`);
-    this.logger.log(`Buffer size for WebSocket transmission: ${bufferToSend.length}`);
+    this.logger.log(
+      `Buffer size for WebSocket transmission: ${bufferToSend.length}`,
+    );
 
     if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
       this.wsClient.send(bufferToSend);
@@ -171,7 +194,7 @@ export class SohriService {
 
   // TURN_END 처리:
   // WebSocket 연결 종료 후, 이미 동기적으로 파일에 기록된 PCM 데이터를 그대로 WAV 파일로 변환하고, 음성 응답 전송 수행
-  async processTurnEnd(): Promise<void> {
+  processTurnEnd(): void {
     if (this.wsClient) {
       this.wsClient.close();
       this.wsClient = null;
@@ -182,9 +205,14 @@ export class SohriService {
   }
 
   // 상태별 공통 처리 함수
-  private process(status: AudioStreamResponseStatus, isMaxTimeout: boolean): void {
+  private process(
+    status: AudioStreamResponseStatus,
+    isMaxTimeout: boolean,
+  ): void {
     this.sendAudioStreamResponse(status);
-    this.logger.log(`Processing: status=${AudioStreamResponseStatus[status]}, isMaxTimeout=${isMaxTimeout}`);
+    this.logger.log(
+      `Processing: status=${AudioStreamResponseStatus[status]}, isMaxTimeout=${isMaxTimeout}`,
+    );
     if (status === AudioStreamResponseStatus.END) {
       // END 상태일 때 음성 응답 전송 수행
       this.sendSpeechResponse(this.currentTurnId, true, isMaxTimeout);
@@ -197,7 +225,7 @@ export class SohriService {
   }
 
   // PCM -> WAV 변환 함수 (직접 WAV 헤더를 달아서 변환)
-  private async convertTurnWavFile(turnId: string, isEnd: boolean): Promise<string> {
+  private convertTurnWavFile(turnId: string, isEnd: boolean): string {
     const wavDir = process.env.WAV_DIR || '/tmp/wav';
     const datePath = new Date().toISOString().split('T')[0]; // 예: "2025-03-17"
     const baseName = path.basename(this.tempFile, '.pcm');
@@ -207,7 +235,9 @@ export class SohriService {
       fs.mkdirSync(wavDirFull, { recursive: true });
       this.logger.log(`WAV directory created: ${wavDirFull}`);
     }
-    this.logger.log(`Converting PCM to WAV manually: ${this.tempFile} -> ${wavFile}`);
+    this.logger.log(
+      `Converting PCM to WAV manually: ${this.tempFile} -> ${wavFile}`,
+    );
     try {
       const pcmData = fs.readFileSync(this.tempFile);
       // PCM 데이터의 스펙: 16000 Hz, 1 채널, 16-bit
@@ -222,10 +252,16 @@ export class SohriService {
   }
 
   // 음성 응답 전송 함수: WAV 파일을 multipart/form-data 형식으로 HTTP POST 요청
-  private async sendSpeechResponse(turnId: string, isEnd: boolean, isMaxTimeout: boolean): Promise<void> {
+  private async sendSpeechResponse(
+    turnId: string,
+    isEnd: boolean,
+    isMaxTimeout: boolean,
+  ): Promise<void> {
     try {
-      const wavFile = await this.convertTurnWavFile(turnId, isEnd);
-      this.logger.log(`Sending speech response for turnId: ${turnId} using file: ${wavFile} (isEnd: ${isEnd}, isMaxTimeout: ${isMaxTimeout})`);
+      const wavFile = this.convertTurnWavFile(turnId, isEnd);
+      this.logger.log(
+        `Sending speech response for turnId: ${turnId} using file: ${wavFile} (isEnd: ${isEnd}, isMaxTimeout: ${isMaxTimeout})`,
+      );
 
       const formData = new FormData();
       formData.append('file', fs.createReadStream(wavFile), {
@@ -233,13 +269,20 @@ export class SohriService {
         contentType: 'audio/wav',
       });
 
-      const response = await axios.post('http://epd.mago52.com:9003/speech2text/run', formData, {
-        headers: {
-          ...formData.getHeaders(),
-          'accept': 'application/json',
+      const response = await axios.post(
+        'http://sohri.mago52.com:9004/speech2text/run',
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+            accept: 'application/json',
+            Bearer: 'b19b0332-udua-4534-pjr1-ddc17a898f4d',
+          },
         },
-      });
-      this.logger.log(`Speech response received: ${JSON.stringify(response.data)}`);
+      );
+      this.logger.log(
+        `Speech response received: ${JSON.stringify(response.data)}`,
+      );
     } catch (error: any) {
       this.logger.error('Error sending speech response:', error.message);
     }

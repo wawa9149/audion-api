@@ -57,10 +57,13 @@ export class SohriController {
 
   // Bidirectional streaming RPC: process incoming audio stream
   @GrpcStreamMethod('CareCallEventService', 'audioStream')
-  audioStream(data$: Observable<AudioStreamRequest>, metadata: any): Observable<AudioStreamResponse> {
+  audioStream(
+    data$: Observable<AudioStreamRequest>,
+    metadata: any,
+  ): Observable<AudioStreamResponse> {
     data$.subscribe({
-      next: async (data: AudioStreamRequest) => {
-        await this.sohriService.processAudioBuffer(data);
+      next: (data: AudioStreamRequest) => {
+        this.sohriService.processAudioBuffer(data);
       },
       error: (err) => {
         this.logger.error('audioStream error', err);
@@ -74,7 +77,10 @@ export class SohriController {
 
   // Server streaming RPC: deliver responses (if needed)
   @GrpcStreamMethod('CareCallEventService', 'deliveryStream')
-  deliveryStream(data$: Observable<any>, metadata: any): Observable<DeliveryResponse> {
+  deliveryStream(
+    data$: Observable<any>,
+    metadata: any,
+  ): Observable<DeliveryResponse> {
     return this.sohriService.getDeliveryStream();
   }
 }

@@ -26,6 +26,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/microservices": "^11.0.11",
     "@nestjs/platform-express": "^11.0.1",
+    "@types/fluent-ffmpeg": "^2.1.27",
     "axios": "^1.8.3",
     "ffmpeg-static": "^5.2.0",
     "fluent-ffmpeg": "^2.1.3",
