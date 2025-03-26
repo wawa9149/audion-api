@@ -1,3 +1,5 @@
+# docker/Dockerfile
+
 # 1. Node 기반 이미지
 FROM node:18-alpine
 

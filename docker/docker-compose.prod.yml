@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: sohri-api
+    ports:
+      - '9149:3000'
+    volumes:
+      - /home/ubuntu/.mago/data/sohri-api/logs:/app/logs
+      - /home/ubuntu/.mago/data/sohri-api/results:/app/results
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      GRPC_PACKAGE: ${GRPC_PACKAGE}
+      GRPC_PROTO_PATH: ${GRPC_PROTO_PATH}
+      GRPC_URL: ${GRPC_URL}
+      WS_URL: ${WS_URL}
+      SPEECH_API_URL: ${SPEECH_API_URL}
+      SPEECH_API_TOKEN: ${SPEECH_API_TOKEN}
+      TEMP_DIR: ${TEMP_DIR}
+      WAV_DIR: ${WAV_DIR}
+      RESULT_DIR: ${RESULT_DIR}
+    command: npm run start:prod
+    # networks:
+    #   - mago-services
