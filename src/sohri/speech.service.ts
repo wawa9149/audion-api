@@ -14,11 +14,15 @@ export class SpeechService {
   constructor(private readonly configService: ConfigService) { }
 
   async sendSpeechResponse(turnId: string, pcmFile: string, isMaxTimeout: boolean) {
-    const wavDir = process.env.WAV_DIR || '/tmp/wav';
+    const resultRoot = process.env.RESULT_DIR || './results';
     const datePath = new Date().toISOString().split('T')[0];
-    const wavPath = path.join(wavDir, datePath, `${turnId}.wav`);
-    fs.mkdirSync(path.dirname(wavPath), { recursive: true });
+    const targetDir = path.join(resultRoot, datePath, turnId);
+    fs.mkdirSync(targetDir, { recursive: true });
 
+    const wavPath = path.join(targetDir, `${turnId}.wav`);
+    const resultPath = path.join(targetDir, `${turnId}_result.json`);
+
+    // PCM → WAV 변환
     const pcmData = fs.readFileSync(pcmFile);
     const wavData = pcmToWav(pcmData, 16000, 1, 16);
     fs.writeFileSync(wavPath, wavData);
@@ -37,13 +41,16 @@ export class SpeechService {
       });
       this.logger.log(`Speech response: ${JSON.stringify(response.data)}`);
 
+      // ✅ 결과 JSON 저장
+      fs.writeFileSync(resultPath, JSON.stringify(response.data, null, 2));
+
       return {
         turnId,
-        action: 1, // SPEECH_TO_TEXT
         speech: response.data.content,
       };
     } catch (err: any) {
       this.logger.error('Failed to send speech response', err.message);
+      return null;
     }
   }
 }

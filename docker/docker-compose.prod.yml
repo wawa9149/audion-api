@@ -9,6 +9,7 @@ services:
     volumes:
       - /home/ubuntu/.mago/data/sohri-api/logs:/app/logs
       - /home/ubuntu/.mago/data/sohri-api/results:/app/results
+      - ./secrets/.env.enc.key:/app/secrets/.env.enc.key
     environment:
       NODE_ENV: ${NODE_ENV}
       GRPC_PACKAGE: ${GRPC_PACKAGE}
