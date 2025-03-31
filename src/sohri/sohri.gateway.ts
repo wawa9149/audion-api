@@ -32,12 +32,11 @@ export class SohriGateway implements OnGatewayInit {
   }
 
   @SubscribeMessage('audioStream')
-  handleAudio(client: Socket, data: { turnId: string; content: string; ttsStatus: number }) {
+  handleAudio(client: Socket, data: { turnId: string; content: string }) {
     const buffer = Buffer.from(data.content, 'base64');
     this.sohriService.processAudioBuffer({
       turnId: data.turnId,
       content: buffer,
-      ttsStatus: data.ttsStatus,
     });
   }
 }

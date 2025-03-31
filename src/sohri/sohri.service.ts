@@ -8,20 +8,22 @@ import { SpeechService } from './speech.service';
 import { WebSocketService } from './websocket.service';
 
 export enum AudioStreamResponseStatus {
-  PAUSE = 1,
-  END = 2,
-  SPEECH = 3,
-  TIMEOUT = 4,
-  WAITING = 5,
-  ERROR = 6,
+  EPD_WAITING = 0,
+  EPD_SPEECH = 1,
+  EPD_PAUSE = 2,
+  EPD_END = 3,
+  EPD_TIMEOUT = 4,
+  EPD_MAX_TIMEOUT = 6,
+  EPD_NONE = 7,
 }
+
+const CHUNK_SIZE = 1600;
 
 @Injectable()
 export class SohriService {
   private readonly logger = new Logger(SohriService.name);
-
-  private clientMap = new Map<string, Socket>();        // turnId ↔ client
-  private tempFiles = new Map<string, string>();        // turnId ↔ temp PCM file
+  private clientMap = new Map<string, Socket>();
+  private tempFiles = new Map<string, string>();
   private deliverySubject = new Subject<any>();
   private server: Server;
 
@@ -43,58 +45,43 @@ export class SohriService {
     return this.deliverySubject.asObservable();
   }
 
-  /**
-   * TURN_START, TURN_END, etc 처리
-   */
   handleEvent(data: { event: number }, client: Socket): string {
     const { event } = data;
 
     switch (event) {
-      case 10: // TURN_START
+      case 10: {
         const turnId = uuidv4();
         const tempFile = this.fileService.prepareTempFile(turnId);
         this.tempFiles.set(turnId, tempFile);
         this.clientMap.set(turnId, client);
         this.logger.log(`TURN_START: ${turnId}`);
-        this.wsService.connect((status) => {
-          this.logger.log(`WebSocket 상태 수신: ${AudioStreamResponseStatus[status]}`);
-          if (status === AudioStreamResponseStatus.END) {
-            const file = this.tempFiles.get(turnId);
-            if (file) {
-              this.speechService.sendSpeechResponse(turnId, file, false)
-                .then((result) => {
-                  this.deliverySubject.next(result);
-                })
-                .catch((err) => this.logger.error('STT 실패:', err.message));
-            }
-          }
-        });
-        return turnId;
 
-      case 11: // TURN_PAUSE
+        this.wsService.connect(); // ✅ WebSocket 연결
+
+        return turnId;
+      }
+      case 11:
         this.logger.log('Turn paused');
         break;
-
-      case 12: // TURN_RESUME
+      case 12:
         this.logger.log('Turn resumed');
         break;
-
-      case 13: // TURN_END
+      case 13: {
         const existingTurnId = this.findTurnIdByClient(client);
         const file = this.tempFiles.get(existingTurnId);
         if (existingTurnId && file) {
           this.logger.log(`TURN_END: ${existingTurnId}, file: ${file}`);
-          this.wsService.disconnect();
-          this.speechService
-            .sendSpeechResponse(existingTurnId, file, false)
+          this.speechService.sendSpeechResponse(existingTurnId, file, false)
             .then((result) => {
-              this.deliverySubject.next(result);
-              this.logger.log(`Delivery pushed for ${existingTurnId}`);
+              if (result) {
+                this.deliverySubject.next(result);
+                this.logger.log(`Delivery pushed for ${existingTurnId}`);
+              }
             })
             .catch((err) => this.logger.error('STT 실패:', err.message));
         }
         return existingTurnId;
-
+      }
       default:
         this.logger.warn(`Unknown event: ${event}`);
     }
@@ -102,22 +89,28 @@ export class SohriService {
     return this.findTurnIdByClient(client);
   }
 
-  /**
-   * 오디오 청크 처리
-   */
-  processAudioBuffer(data: { turnId: string; content: Buffer; ttsStatus: number }): void {
-    const tempFile = this.tempFiles.get(data.turnId);
-    if (tempFile) {
-      this.fileService.appendToFile(tempFile, data.content);
-      this.wsService.send(data.ttsStatus, data.content);
-    } else {
-      this.logger.warn(`No temp file found for turnId: ${data.turnId}`);
+  async processAudioBuffer(data: { turnId: string; content: Buffer }): Promise<void> {
+    const turnId = data.turnId;
+    const tempFile = this.tempFiles.get(turnId);
+    if (!tempFile) return;
+
+    this.fileService.appendToFile(tempFile, data.content);
+
+    const result = await this.wsService.handleMessage(data.content);
+    const status = result.status;
+    const score = result.speech_score;
+
+    this.logger.debug(`[${turnId}] EPD: ${status}, score: ${score}`);
+
+    if (status === AudioStreamResponseStatus.EPD_END) {
+      this.speechService.sendSpeechResponse(turnId, tempFile, false)
+        .then((result) => {
+          if (result) this.deliverySubject.next(result);
+        })
+        .catch((err) => this.logger.error(`STT 실패: ${err.message}`));
     }
   }
 
-  /**
-   * 소켓을 기준으로 turnId 찾기
-   */
   private findTurnIdByClient(client: Socket): string {
     for (const [turnId, sock] of this.clientMap.entries()) {
       if (sock.id === client.id) return turnId;
