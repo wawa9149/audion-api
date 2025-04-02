@@ -1,4 +1,3 @@
-// src/sohri/sohri.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { Subject, Observable } from 'rxjs';
@@ -17,7 +16,14 @@ export enum AudioStreamResponseStatus {
   EPD_NONE = 7,
 }
 
-const CHUNK_SIZE = 1600;
+interface StreamState {
+  start: number;
+  end: number;
+  flag: boolean;
+  recognized: boolean;
+  lastChunk: number;
+  nChunks: number;
+}
 
 @Injectable()
 export class SohriService {
@@ -26,6 +32,8 @@ export class SohriService {
   private tempFiles = new Map<string, string>();
   private deliverySubject = new Subject<any>();
   private server: Server;
+
+  private stateMap = new Map<string, StreamState>();
 
   constructor(
     private readonly fileService: FileService,
@@ -45,69 +53,154 @@ export class SohriService {
     return this.deliverySubject.asObservable();
   }
 
-  handleEvent(data: { event: number }, client: Socket): string {
-    const { event } = data;
+  handleEvent(data: { event: number; turnId?: string }, client: Socket): string {
+    const { event, turnId } = data;
 
     switch (event) {
       case 10: {
-        const turnId = uuidv4();
-        const tempFile = this.fileService.prepareTempFile(turnId);
-        this.tempFiles.set(turnId, tempFile);
-        this.clientMap.set(turnId, client);
-        this.logger.log(`TURN_START: ${turnId}`);
-
-        this.wsService.connect(); // ✅ WebSocket 연결
-
-        return turnId;
+        const newTurnId = uuidv4();
+        const tempFile = this.fileService.prepareTempFile(newTurnId);
+        this.tempFiles.set(newTurnId, tempFile);
+        this.clientMap.set(newTurnId, client);
+        this.stateMap.set(newTurnId, {
+          start: 0,
+          end: 0,
+          flag: false,
+          recognized: false,
+          lastChunk: 0,
+          nChunks: 0,
+        });
+        this.logger.log(`TURN_START: ${newTurnId}`);
+        this.wsService.connect();
+        return newTurnId;
       }
-      case 11:
-        this.logger.log('Turn paused');
-        break;
-      case 12:
-        this.logger.log('Turn resumed');
-        break;
       case 13: {
-        const existingTurnId = this.findTurnIdByClient(client);
-        const file = this.tempFiles.get(existingTurnId);
-        if (existingTurnId && file) {
-          this.logger.log(`TURN_END: ${existingTurnId}, file: ${file}`);
-          this.speechService.sendSpeechResponse(existingTurnId, file, false)
+        const id = turnId || this.findTurnIdByClient(client);
+        const file = this.tempFiles.get(id);
+        if (id && file) {
+          this.logger.log(`TURN_END: ${id}, file: ${file}`);
+
+          // 👇 상태 강제 정리 (중요!)
+          this.clientMap.delete(id);
+          this.tempFiles.delete(id);
+          this.stateMap.delete(id); // 💥 여기가 핵심
+
+          this.speechService.sendSpeechResponse(id, file)
             .then((result) => {
               if (result) {
-                this.deliverySubject.next(result);
-                this.logger.log(`Delivery pushed for ${existingTurnId}`);
+                this.logger.log(`Final STT result for ${id} saved.`);
               }
             })
             .catch((err) => this.logger.error('STT 실패:', err.message));
         }
-        return existingTurnId;
+        return id;
       }
       default:
-        this.logger.warn(`Unknown event: ${event}`);
+        return this.findTurnIdByClient(client);
     }
-
-    return this.findTurnIdByClient(client);
   }
 
   async processAudioBuffer(data: { turnId: string; content: Buffer }): Promise<void> {
-    const turnId = data.turnId;
+    const { turnId, content } = data;
     const tempFile = this.tempFiles.get(turnId);
     if (!tempFile) return;
 
-    this.fileService.appendToFile(tempFile, data.content);
+    this.fileService.appendToFile(tempFile, content);
 
-    const result = await this.wsService.handleMessage(data.content);
+    const state = this.stateMap.get(turnId);
+    if (!state) return;
+
+    state.nChunks += 1;
+
+    const result = await this.wsService.handleMessage(content);
     const status = result.status;
     const score = result.speech_score;
 
     this.logger.debug(`[${turnId}] EPD: ${status}, score: ${score}`);
 
-    if (status === AudioStreamResponseStatus.EPD_END) {
-      this.speechService.sendSpeechResponse(turnId, tempFile, false)
-        .then((result) => {
-          if (result) this.deliverySubject.next(result);
-        })
-        .catch((err) => this.logger.error(`STT 실패: ${err.message}`));
+    if (status === AudioStreamResponseStatus.EPD_SPEECH) {
+      if (!state.flag) {
+        state.flag = true;
+        state.start = state.nChunks >= 2 ? state.nChunks - 2 : 0;
+        state.lastChunk = state.nChunks;
+      }
+
+      if (state.nChunks - state.lastChunk >= 5) {
+        state.end = state.nChunks;
+        if (state.end - state.start > 1) {
+          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
+          await this.runPartialSTT(turnId, tempFile, state);
+          state.lastChunk = state.nChunks;
+        }
+      }
+    }
+
+    if (status === AudioStreamResponseStatus.EPD_PAUSE && state.recognized) {
+      if (state.nChunks - state.start > 50) {
+        state.end = state.nChunks;
+        if (state.end - state.start > 1) {
+          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
+          await this.runPartialSTT(turnId, tempFile, state, true);
+          this.stateMap.set(turnId, {
+            start: state.end,
+            end: state.end,
+            flag: false,
+            recognized: false,
+            lastChunk: state.nChunks,
+            nChunks: state.nChunks,
+          });
+          // state.recognized = true;
+        }
+      }
+
+      if (!state.recognized) {
+        state.end = state.nChunks;
+        state.lastChunk = state.nChunks;
+        if (state.end - state.start > 1) {
+          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
+          await this.runPartialSTT(turnId, tempFile, state, true);
+          state.recognized = true;
+        }
+      }
+
+      else {
+        state.lastChunk = state.nChunks;
+      }
+
+    }
+    if (status === AudioStreamResponseStatus.EPD_END && state.flag) {
+      state.end = state.nChunks;
+      if (state.end - state.start > 1) {
+        this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
+        await this.runPartialSTT(turnId, tempFile, state, true);
+        this.stateMap.set(turnId, {
+          start: state.end,
+          end: state.end,
+          flag: false,
+          recognized: false,
+          lastChunk: state.nChunks,
+          nChunks: state.nChunks,
+        });
+      }
+    }
+  }
+
+  private async runPartialSTT(turnId: string, file: string, state: StreamState, isPartial = false): Promise<void> {
+    try {
+      const result = await this.speechService.sendSpeechResponse(
+        turnId,
+        file,
+        state.start,
+        state.end,
+      );
+      if (result) {
+        this.deliverySubject.next({ ...result, isPartial });
+        // state.recognized = true;
+        // state.start = state.end; // 다음 청크를 위해 시작점 업데이트
+        this.logger.log(`Partial STT result for ${turnId}`);
+      }
+    } catch (err) {
+      this.logger.error(`Partial STT 실패: ${err.message}`);
     }
   }
 

@@ -17,7 +17,6 @@ export class SpeechService {
    * PCM 파일의 지정된 구간을 WAV로 변환하고 STT API를 호출합니다.
    * @param turnId - TURN 식별자
    * @param pcmFile - PCM 파일 경로
-   * @param isMaxTimeout - 최대 타임아웃 여부 (추가 용도)
    * @param startChunk - (옵션) 변환할 시작 청크 번호 (청크 단위, 1 청크 = CHUNK_SIZE 바이트)
    * @param endChunk - (옵션) 변환할 마지막 청크 번호
    * @returns STT API의 응답 결과 (speech 내용 등)
@@ -25,7 +24,6 @@ export class SpeechService {
   async sendSpeechResponse(
     turnId: string,
     pcmFile: string,
-    isMaxTimeout: boolean,
     startChunk?: number,
     endChunk?: number,
   ) {
@@ -48,6 +46,7 @@ export class SpeechService {
     if (startChunk !== undefined && endChunk !== undefined) {
       const startByte = startChunk * chunkByteSize;
       const endByte = endChunk * chunkByteSize;
+      this.logger.debug(`Converting PCM from byte ${startByte} to ${endByte}`);
       dataToConvert = pcmData.slice(startByte, endByte);
     } else {
       dataToConvert = pcmData;
