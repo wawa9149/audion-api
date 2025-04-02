@@ -124,41 +124,43 @@ export class SohriService {
         state.start = state.nChunks >= 2 ? state.nChunks - 2 : 0;
         state.lastChunk = state.nChunks;
       }
-
-      if (state.nChunks - state.lastChunk >= 5) {
-        state.end = state.nChunks;
-        if (state.end - state.start > 1) {
-          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
-          await this.runPartialSTT(turnId, tempFile, state);
-          state.lastChunk = state.nChunks;
+      else {
+        if (state.nChunks - state.lastChunk >= 5) {
+          state.end = state.nChunks;
+          if (state.end - state.start > 1) {
+            this.logger.debug(`SPEECH: ${state.start} to ${state.end}`);
+            await this.runPartialSTT(turnId, tempFile, state);
+            state.lastChunk = state.nChunks;
+          }
         }
       }
+      state.recognized = false;
     }
 
-    if (status === AudioStreamResponseStatus.EPD_PAUSE && state.recognized) {
-      if (state.nChunks - state.start > 50) {
-        state.end = state.nChunks;
-        if (state.end - state.start > 1) {
-          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
-          await this.runPartialSTT(turnId, tempFile, state, true);
-          this.stateMap.set(turnId, {
-            start: state.end,
-            end: state.end,
-            flag: false,
-            recognized: false,
-            lastChunk: state.nChunks,
-            nChunks: state.nChunks,
-          });
-          // state.recognized = true;
-        }
-      }
+    if (status === AudioStreamResponseStatus.EPD_PAUSE && !state.recognized) {
+      // if (state.nChunks - state.start > 50) {
+      //   state.end = state.nChunks;
+      //   if (state.end - state.start > 1) {
+      //     this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
+      //     await this.runPartialSTT(turnId, tempFile, state, true);
+      //     this.stateMap.set(turnId, {
+      //       start: state.end,
+      //       end: state.end,
+      //       flag: false,
+      //       recognized: false,
+      //       lastChunk: state.nChunks,
+      //       nChunks: state.nChunks,
+      //     });
+      //     // state.recognized = true;
+      //   }
+      // }
 
       if (!state.recognized) {
         state.end = state.nChunks;
         state.lastChunk = state.nChunks;
         if (state.end - state.start > 1) {
-          this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
-          await this.runPartialSTT(turnId, tempFile, state, true);
+          this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
+          await this.runPartialSTT(turnId, tempFile, state, false);
           state.recognized = true;
         }
       }
@@ -166,12 +168,12 @@ export class SohriService {
       else {
         state.lastChunk = state.nChunks;
       }
-
     }
+
     if (status === AudioStreamResponseStatus.EPD_END && state.flag) {
       state.end = state.nChunks;
       if (state.end - state.start > 1) {
-        this.logger.debug(`Speech detected from chunk ${state.start} to ${state.end}`);
+        this.logger.debug(`END: ${state.start} to ${state.end}`);
         await this.runPartialSTT(turnId, tempFile, state, true);
         this.stateMap.set(turnId, {
           start: state.end,

@@ -47,7 +47,8 @@ export class SpeechService {
       const startByte = startChunk * chunkByteSize;
       const endByte = endChunk * chunkByteSize;
       this.logger.debug(`Converting PCM from byte ${startByte} to ${endByte}`);
-      dataToConvert = pcmData.slice(startByte, endByte);
+      const rawSlice = Uint8Array.prototype.slice.call(pcmData, startByte, endByte);
+      dataToConvert = Buffer.from(rawSlice); // ✅ 안전하게 복사된 버퍼
     } else {
       dataToConvert = pcmData;
     }
