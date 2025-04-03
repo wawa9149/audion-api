@@ -19,4 +19,18 @@ export class FileService {
     fs.appendFileSync(filePath, data);
     this.logger.log(`Appended ${data.length} bytes to ${filePath}`);
   }
+
+  overwriteFile(filePath: string, data: Buffer) {
+    fs.writeFileSync(filePath, data);
+    this.logger.log(`Overwrote file: ${filePath}`);
+  }
+
+  deleteFile(filePath: string) {
+    try {
+      fs.unlinkSync(filePath);
+      this.logger.log(`Deleted file: ${filePath}`);
+    } catch (err) {
+      this.logger.error(`Error deleting file: ${filePath}`, err);
+    }
+  }
 }

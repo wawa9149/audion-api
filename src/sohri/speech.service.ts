@@ -33,7 +33,7 @@ export class SpeechService {
     fs.mkdirSync(targetDir, { recursive: true });
 
     const wavPath = path.join(targetDir, `${turnId}.wav`);
-    const resultPath = path.join(targetDir, `${turnId}_result.json`);
+    // const resultPath = path.join(targetDir, `${turnId}_result.json`);
 
     // 읽은 PCM 데이터 전체
     const pcmData = fs.readFileSync(pcmFile);
@@ -49,7 +49,8 @@ export class SpeechService {
       this.logger.debug(`Converting PCM from byte ${startByte} to ${endByte}`);
       const rawSlice = Uint8Array.prototype.slice.call(pcmData, startByte, endByte);
       dataToConvert = Buffer.from(rawSlice); // ✅ 안전하게 복사된 버퍼
-    } else {
+    }
+    else {
       dataToConvert = pcmData;
     }
 
@@ -74,7 +75,7 @@ export class SpeechService {
       this.logger.log(`Speech response: ${JSON.stringify(response.data)}`);
 
       // 결과 JSON 저장
-      fs.writeFileSync(resultPath, JSON.stringify(response.data, null, 2));
+      // fs.writeFileSync(resultPath, JSON.stringify(response.data, null, 2));
 
       return {
         turnId,
