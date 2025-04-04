@@ -84,6 +84,7 @@ export class SohriService {
           nChunks: 0,
         });
         this.bufferMap.set(newTurnId, new BufferManager());
+        client.emit('turnReady', { turnId: newTurnId });
 
         this.logger.log(`TURN_START: ${newTurnId}`);
         this.wsService.connect();
@@ -92,6 +93,15 @@ export class SohriService {
       case 13: {
         const id = turnId || this.findTurnIdByClient(client);
         const buffer = this.bufferMap.get(id);
+
+        // stt queue 초기화
+        const sttQueue = this.sttQueueMap.get(id);
+        if (sttQueue) {
+          this.logger.log(`TURN_END: ${id}, sttQueue 초기화`);
+          this.sttQueueMap.delete(id);
+        }
+
+        // buffer 초기화
         if (id && buffer) {
           this.logger.log(`TURN_END: ${id}, buffer: ${buffer}`);
 
@@ -109,6 +119,13 @@ export class SohriService {
 
   async processAudioBuffer(data: { turnId: string; content: Buffer }): Promise<void> {
     const { turnId, content } = data;
+
+    // 👇 TURN_START가 완료되지 않은 경우 대기
+    if (!this.bufferMap.has(turnId)) {
+      this.logger.warn(`[${turnId}] 아직 BufferManager 초기화 전, 청크 무시`);
+      return;
+    }
+
     const buffer = this.bufferMap.get(turnId);
     if (!buffer) {
       this.logger.warn(`[${turnId}] ❌ BufferManager 없음`);
