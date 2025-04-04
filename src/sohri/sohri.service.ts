@@ -5,9 +5,7 @@ import { Socket, Server } from 'socket.io';
 import { FileService } from './file.service';
 import { SpeechService } from './speech.service';
 import { WebSocketService } from './websocket.service';
-import { pcmToWav } from './utils/pcm-to-wav';
-import * as fs from 'fs';
-import * as path from 'path';
+import { BufferManager } from 'src/utils/buffer-manager';
 
 export enum AudioStreamResponseStatus {
   EPD_WAITING = 0,
@@ -32,10 +30,10 @@ interface StreamState {
 export class SohriService {
   private readonly logger = new Logger(SohriService.name);
   private clientMap = new Map<string, Socket>();
-  private tempFiles = new Map<string, string>();
   private deliverySubject = new Subject<any>();
   private server: Server;
   private sttQueueMap = new Map<string, Promise<void>>();
+  private bufferMap = new Map<string, BufferManager>();
 
   private stateMap = new Map<string, StreamState>();
   private sttCallCounter = 0;
@@ -45,6 +43,18 @@ export class SohriService {
     private readonly speechService: SpeechService,
     private readonly wsService: WebSocketService,
   ) { }
+
+  private resetState(turnId: string, prev: StreamState) {
+    this.stateMap.set(turnId, {
+      start: prev.end,               // ✅ 다음 구간은 이전 end부터 시작
+      end: prev.end,
+      flag: false,
+      recognized: false,
+      lastChunk: prev.nChunks,      // 마지막 STT가 호출된 시점 기준
+      nChunks: prev.nChunks,        // 전체 누적된 청크 수 유지
+    });
+  }
+
 
   setServer(server: Server) {
     this.server = server;
@@ -64,8 +74,6 @@ export class SohriService {
     switch (event) {
       case 10: {
         const newTurnId = uuidv4();
-        const tempFile = this.fileService.prepareTempFile(newTurnId);
-        this.tempFiles.set(newTurnId, tempFile);
         this.clientMap.set(newTurnId, client);
         this.stateMap.set(newTurnId, {
           start: 0,
@@ -75,28 +83,22 @@ export class SohriService {
           lastChunk: 0,
           nChunks: 0,
         });
+        this.bufferMap.set(newTurnId, new BufferManager());
+
         this.logger.log(`TURN_START: ${newTurnId}`);
         this.wsService.connect();
         return newTurnId;
       }
       case 13: {
         const id = turnId || this.findTurnIdByClient(client);
-        const file = this.tempFiles.get(id);
-        if (id && file) {
-          this.logger.log(`TURN_END: ${id}, file: ${file}`);
+        const buffer = this.bufferMap.get(id);
+        if (id && buffer) {
+          this.logger.log(`TURN_END: ${id}, buffer: ${buffer}`);
 
           // 👇 상태 강제 정리 (중요!)
           this.clientMap.delete(id);
-          this.tempFiles.delete(id);
           this.stateMap.delete(id); // 💥 여기가 핵심
-
-          // this.speechService.sendSpeechResponse(id, file)
-          //   .then((result) => {
-          //     if (result) {
-          //       this.logger.log(`Final STT result for ${id} saved.`);
-          //     }
-          //   })
-          //   .catch((err) => this.logger.error('STT 실패:', err.message));
+          this.bufferMap.delete(id);
         }
         return id;
       }
@@ -107,10 +109,14 @@ export class SohriService {
 
   async processAudioBuffer(data: { turnId: string; content: Buffer }): Promise<void> {
     const { turnId, content } = data;
-    const tempFile = this.tempFiles.get(turnId);
-    if (!tempFile) return;
+    const buffer = this.bufferMap.get(turnId);
+    if (!buffer) {
+      this.logger.warn(`[${turnId}] ❌ BufferManager 없음`);
+      return;
+    }
 
-    this.fileService.appendToFile(tempFile, content);
+    buffer.append(content);  // ✅ 메모리 버퍼에 청크 추가
+
 
     const state = this.stateMap.get(turnId);
     if (!state) return;
@@ -134,8 +140,7 @@ export class SohriService {
           state.end = state.nChunks;
           if (state.end - state.start > 1) {
             this.logger.log(`SPEECH: ${state.start} to ${state.end}`);
-            // await this.runPartialSTT(turnId, tempFile, state, 0);
-            await this.runPartialSTTQueue(turnId, tempFile, state, 0);
+            await this.runPartialSTTQueue(turnId, state, 0);
             state.lastChunk = state.nChunks;
           }
         }
@@ -144,39 +149,22 @@ export class SohriService {
     }
 
     if (status === AudioStreamResponseStatus.EPD_PAUSE && !state.recognized) {
-      if (state.nChunks - state.start > 50) {
-        state.end = state.nChunks;
-        if (state.end - state.start > 1) {
-          this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
-          // await this.runPartialSTT(turnId, tempFile, state, 0);
-          await this.runPartialSTTQueue(turnId, tempFile, state, 0);
-          this.stateMap.set(turnId, {
-            start: 0,
-            end: 0,
-            flag: false,
-            recognized: false,
-            lastChunk: 0,
-            nChunks: 0,
-          });
-          // this.stateMap.set(turnId, {
-          //   start: state.end,
-          //   end: state.end,
-          //   flag: false,
-          //   recognized: false,
-          //   lastChunk: state.nChunks,
-          //   nChunks: state.nChunks,
-          // });
-          // state.recognized = true;
-        }
-      }
+      // if (state.nChunks - state.start > 50) {
+      //   state.end = state.nChunks;
+      //   if (state.end - state.start > 1) {
+      //     this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
+      //     await this.runPartialSTTQueue(turnId, state, 0);
+      //     this.resetState(turnId, state);
+      //     // state.recognized = true;
+      //   }
+      // }
 
       if (!state.recognized) {
         state.end = state.nChunks;
         state.lastChunk = state.nChunks;
         if (state.end - state.start > 1) {
           this.logger.log(`PAUSE: ${state.start} to ${state.end}`);
-          // await this.runPartialSTT(turnId, tempFile, state, 0);
-          await this.runPartialSTTQueue(turnId, tempFile, state, 0);
+          await this.runPartialSTTQueue(turnId, state, 0);
           state.recognized = true;
         }
       }
@@ -190,29 +178,16 @@ export class SohriService {
       state.end = state.nChunks;
       this.logger.log(`END1: ${state.start} to ${state.end}`);
       if (state.end - state.start > 1) {
-        // if (true) {
         this.logger.log(`END2: ${state.start} to ${state.end}`);
-        // await this.runPartialSTT(turnId, tempFile, state, 1);
-        await this.runPartialSTTQueue(turnId, tempFile, state, 1);
+        await this.runPartialSTTQueue(turnId, state, 1);
 
-        this.stateMap.set(turnId, {
-          start: 0,
-          end: 0,
-          flag: false,
-          recognized: false,
-          lastChunk: 0,
-          nChunks: 0,
-        });
-
-        // 🔄 PCM 파일 비우기
-        fs.writeFileSync(tempFile, Buffer.alloc(0));
+        this.resetState(turnId, state);
       }
     }
   }
 
   private async runPartialSTTQueue(
     turnId: string,
-    file: string,
     state: StreamState,
     end: number
   ): Promise<void> {
@@ -223,7 +198,7 @@ export class SohriService {
     const task = prev
       .then(async () => {
         this.logger.log(`${label} ▶️ Dequeued & 시작`);
-        await this.runPartialSTT(turnId, file, { ...state }, end, queueOrder);
+        await this.runPartialSTT(turnId, { ...state }, end, queueOrder);
       })
       .catch(err => {
         this.logger.error(`${label} ❌ 큐 처리 중 오류: ${err.message}`);
@@ -236,11 +211,17 @@ export class SohriService {
 
   private async runPartialSTT(
     turnId: string,
-    file: string,
     state: StreamState,
     end: number,
     order?: number
   ): Promise<void> {
+
+    if (end === 1) {
+      const dummy = {};
+      this.deliverySubject.next({ ...dummy, end });
+      this.logger.log(`[${turnId}] 🔄 더미 응답 전송`);
+    }
+
     const label = order !== undefined
       ? `[#${order}] [${turnId}] ${state.start}~${state.end}`
       : `[${turnId}] ${state.start}~${state.end}`;
@@ -248,9 +229,18 @@ export class SohriService {
     this.logger.log(`${label} 🟢 STT 요청 시작`);
 
     try {
+
+      const buffer = this.bufferMap.get(turnId);
+      if (!buffer) {
+        this.logger.warn(`${label} ⚠️ BufferManager not found`);
+        return;
+      }
+
+      const sliced = buffer.readRange(state.start, state.end);
+
       const result = await this.speechService.sendSpeechResponse(
         turnId,
-        file,
+        sliced,
         state.start,
         state.end
       );
