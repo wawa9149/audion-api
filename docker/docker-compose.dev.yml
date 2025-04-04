@@ -18,6 +18,12 @@ services:
       TEMP_DIR: ${TEMP_DIR}
       WAV_DIR: ${WAV_DIR}
       RESULT_DIR: ${RESULT_DIR}
+      networks:
+      - mago-services
     command: npm run start:dev
     networks:
       - mago-services
+
+networks:
+  mago-services:
+    external: true

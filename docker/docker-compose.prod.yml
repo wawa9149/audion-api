@@ -1,3 +1,5 @@
+version: '3.9'
+
 services:
   app:
     build:
@@ -21,3 +23,7 @@ services:
     command: npm run start:prod
     networks:
       - mago-services
+
+networks:
+  mago-services:
+    external: true
