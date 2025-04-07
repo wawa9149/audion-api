@@ -149,15 +149,15 @@ export class SohriService {
     }
 
     if (status === AudioStreamResponseStatus.EPD_PAUSE && !state.recognized) {
-      // if (state.nChunks - state.start > 50) {
-      //   state.end = state.nChunks;
-      //   if (state.end - state.start > 1) {
-      //     this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
-      //     await this.runPartialSTTQueue(turnId, state, 0);
-      //     this.resetState(turnId, state);
-      //     // state.recognized = true;
-      //   }
-      // }
+      if (state.nChunks - state.start > 50) {
+        state.end = state.nChunks;
+        if (state.end - state.start > 1) {
+          this.logger.debug(`PAUSE: ${state.start} to ${state.end}`);
+          await this.runPartialSTTQueue(turnId, state, 1);
+          this.resetState(turnId, state);
+          // state.recognized = true;
+        }
+      }
 
       if (!state.recognized) {
         state.end = state.nChunks;
