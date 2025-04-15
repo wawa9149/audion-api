@@ -228,7 +228,7 @@ export class SohriService {
       if (!state.flag) {
         // 최초 Speech
         state.flag = true;
-        state.start = (state.nChunks >= 2) ? state.nChunks - 2 : 0;
+        state.start = (state.nChunks >= 3) ? state.nChunks - 3 : 0;
         state.lastChunk = state.nChunks;
       } else {
         // 이미 speech 중
@@ -269,9 +269,8 @@ export class SohriService {
 
     if (status === AudioStreamResponseStatus.EPD_END && state.flag) {
       state.end = state.nChunks;
-      this.logger.log(`END1: ${state.start} ~ ${state.end}`);
       if (state.end - state.start > 1) {
-        this.logger.log(`END2: ${state.start} ~ ${state.end}`);
+        this.logger.log(`END: ${state.start} ~ ${state.end}`);
         await this.runPartialSTTQueue(session_id, status, state, 1);
         this.resetState(session_id, state);
       }
@@ -294,10 +293,12 @@ export class SohriService {
     const queueOrder = this.sttCallCounter++;
     const label = `[#${queueOrder}-EPD${epdStatus}] [${sessionId}] ${state.start}~${state.end}`;
 
+    const clonedState = { ...state };
+
     const task = prevChain
       .then(async () => {
         this.logger.log(`${label} ▶️ Dequeued & 시작`);
-        await this.runPartialSTT(sessionId, { ...state }, end, queueOrder);
+        await this.runPartialSTT(sessionId, clonedState, end, queueOrder);
       })
       .catch(err => {
         this.logger.error(`${label} ❌ STT 큐 처리 오류: ${err.message}`);
@@ -339,6 +340,15 @@ export class SohriService {
         stats.totalTime += elapsed;
         stats.count++;
         this.sttStatsMap.set(sessionId, stats);
+
+        if (end === 1) {
+          // 버퍼에서 해당 구간 삭제
+          const buffer = this.bufferMap.get(sessionId);
+          if (buffer) {
+            buffer.truncateUntil(state.end - 5);
+            this.logger.log(`${label} 🟢 Buffer truncateUntil: ${state.end}`);
+          }
+        }
       }
     } catch (err) {
       this.logger.error(`${label} 🔴 STT 실패: ${err.message}`);

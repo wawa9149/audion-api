@@ -84,6 +84,10 @@ async function runSingleClientTest(clientIndex: number, audioPath: string): Prom
     // delivery 수신
     socket.on('delivery', (msg: any) => {
       console.log(`[Client#${clientIndex}] delivery:`, msg);
+      if (!msg.speech.result) {
+        console.error(`[Client#${clientIndex}] Invalid delivery message:`, msg);
+      }
+
       allResponses.push(msg.speech.result.text);
     });
 

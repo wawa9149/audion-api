@@ -37,7 +37,6 @@ export class SpeechService {
     // WAV 변환
     const wavData = pcmToWav(pcmBuffer, 16000, 1, 16);
     fs.writeFileSync(wavPath, wavData);
-    // this.logger.log(`Converted PCM to WAV: ${wavPath}`);
 
     // STT API 요청
     const url = this.configService.get<string>('SPEECH_API_URL') || 'http://sohri.mago52.com:9004/speech2text/run';
@@ -54,6 +53,15 @@ export class SpeechService {
       });
 
       this.logger.log(`Speech response: ${JSON.stringify(response.data)}`);
+
+      // wav 파일 삭제
+      fs.unlinkSync(wavPath);
+      this.logger.log(`Deleted file: ${wavPath}`);
+
+      // result 디렉토리 삭제
+      fs.rmdirSync(targetDir, { recursive: true });
+      this.logger.log(`Deleted directory: ${targetDir}`);
+
       return {
         sessionId,
         speech: response.data.content,
