@@ -1,7 +1,13 @@
-// src/sohri/websocket.service.ts
+// websocket.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import * as WebSocket from 'ws';
+import { ConfigService } from '@nestjs/config';
+
+export interface EpdResponse {
+  session_id: string;
+  status: number;
+  speech_score?: number;
+}
 
 @Injectable()
 export class WebSocketService {
@@ -10,48 +16,36 @@ export class WebSocketService {
 
   constructor(private readonly configService: ConfigService) { }
 
+  private onEpdMessageCallback?: (data: EpdResponse) => void;
+
   connect(): void {
-    const url = this.configService.get<string>('WS_URL');
-    this.ws = new WebSocket(url);
-
-    this.ws.on('open', () => this.logger.log('WebSocket connected'));
-    this.ws.on('close', () => this.logger.log('WebSocket closed'));
-    this.ws.on('error', (err) => this.logger.error('WebSocket error', err.message));
-  }
-
-  disconnect(): void {
-    this.logger.debug('Disconnecting WebSocket...');
-    this.ws?.close();
-    this.ws = null;
-  }
-
-  async handleMessage(chunk: Buffer): Promise<{ status: number; speech_score: number }> {
-    return new Promise((resolve, reject) => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.logger.error('WebSocket is not open');
-        return reject(new Error('WebSocket not open'));
-      }
-
-      const onMessage = (msg: WebSocket.Data) => {
-        try {
-          const parsed = JSON.parse(msg.toString());
-          this.logger.debug(`📥 WebSocket message received: ${msg.toString()}`);
-          this.ws.off('message', onMessage);
-          resolve(parsed);
-        } catch (err) {
-          this.logger.error('Failed to parse WebSocket message:', err.message);
-          reject(err);
-        }
-      };
-
-      this.ws.on('message', onMessage);
-      this.ws.send(chunk);
-    });
-  }
-
-  send(chunk: Buffer): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(chunk);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.logger.debug('EPD WebSocket already connected');
+      return;
     }
+    this.ws = new WebSocket(this.configService.get<string>('WS_URL'));
+    this.ws.on('error', (err) => this.logger.error('WebSocket error', err.message));
+    this.ws.on('open', () => this.logger.log('EPD WebSocket connected'));
+    this.ws.on('message', (msg) => {
+      // JSON 파싱
+      const parsed = JSON.parse(msg.toString()) as EpdResponse;
+      this.logger.debug(`EPD WebSocket message: ${JSON.stringify(parsed)}`);
+      this.onEpdMessageCallback?.(parsed);
+    });
+    this.ws.on('close', () => this.logger.log('EPD WebSocket closed'));
+    this.ws.on('error', (err) => this.logger.error('EPD WebSocket error', err));
+  }
+
+  sendMessage(sessionId: string, data: Buffer): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.error('WebSocket not open');
+      return;
+    }
+    // 그냥 바이너리 전송 or 특정 프로토콜로 JSON 래핑
+    this.ws.send(data);
+  }
+
+  setEpdCallback(cb: (res: EpdResponse) => void) {
+    this.onEpdMessageCallback = cb;
   }
 }

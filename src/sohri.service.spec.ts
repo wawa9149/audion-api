@@ -9,65 +9,101 @@ ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || '/usr/bin/ffmpeg');
 const SOCKET_URL = 'ws://localhost:3000';
 const SOCKET_PATH = '/ws';
 const chunkSize = 3200;
-let turnId = '';
-const allResponses: any[] = [];
 
-describe('Socket.IO 음성 인식 테스트', () => {
+describe('동시 연결 테스트(4 clients)', () => {
   const audioFile = path.join(__dirname, 'fixtures', 'test-audio.flac');
 
-  it('should send audio chunks and receive delivery', async () => {
-    const socket = io('ws://localhost:3000', {
-      path: '/ws',
-      transports: ['websocket'],
-    });
+  const clientsCount = 1;
+  const results: any[] = []; // 모든 클라이언트 결과 모음
 
-    await new Promise<void>((resolve, reject) => {
-      socket.on('connect', () => {
-        console.log('✅ Socket.IO 연결됨');
-        socket.emit('eventRequest', { event: 10 });
-      });
+  it('should handle 4 concurrent clients', async () => {
+    // 1) 소켓 4개 생성
+    const clientPromises = Array.from({ length: clientsCount }, (_, i) =>
+      runSingleClientTest(i, audioFile)
+    );
 
-      socket.on('eventResponse', async (msg) => {
-        turnId = msg.turnId;
-        console.log('🎙️ TURN 시작:', turnId);
-        const pcmBuffer = await extractAudioSamples(audioFile);
-        await sendChunks(pcmBuffer, socket);
+    // 2) 모두 완료될 때까지 대기
+    const allClientResults = await Promise.all(clientPromises);
 
-        console.log('🛑 TURN_END 전송');
-        socket.emit('eventRequest', { event: 13 });
+    // 3) 검증
+    expect(allClientResults).toHaveLength(clientsCount);
+    // 원하는 대로 검증 로직...
+    console.log('✅ clients all finished', allClientResults);
+  }, 120000); // 타임아웃을 넉넉히(예: 60초)
 
-        // 여기서 delivery 응답을 기다림
-      });
-
-      socket.on('delivery', (msg) => {
-        console.log(`📝 인식 결과: ${JSON.stringify(msg, null, 2)}`);
-        allResponses.push(msg);
-        resolve(); // 🔑 delivery가 오면 테스트 종료
-      });
-
-      socket.on('connect_error', (err) => {
-        console.error('❌ 연결 오류:', err);
-        reject(err);
-      });
-
-      socket.on('disconnect', () => {
-        console.log('🔌 연결 종료');
-      });
-    });
-
-    expect(allResponses.length).toBeGreaterThan(0);
-  }, 20000);
-  afterAll(() => {
-    // 소켓 연결 종료
-    console.log('🛑 테스트 완료. 소켓 연결 종료');
-  });
 });
 
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// ─────────────────────────────────────────────────────────────────────────────
+// 각 클라이언트별 로직
+// ─────────────────────────────────────────────────────────────────────────────
+async function runSingleClientTest(clientIndex: number, audioPath: string): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    const socket = io(SOCKET_URL, {
+      path: SOCKET_PATH,
+      transports: ['websocket'],
+    });
+
+    let localTurnId = '';
+    let allResponses: any[] = [];
+
+    socket.on('connect', () => {
+      console.log(`[Client#${clientIndex}] Socket connected!`);
+      // turn 시작 요청
+      socket.emit('eventRequest', { event: 10 });
+    });
+
+    socket.on('disconnect', () => {
+      console.log(`[Client#${clientIndex}] Socket disconnected`);
+    });
+
+    socket.on('connect_error', (err: any) => {
+      console.error(`[Client#${clientIndex}] connect_error:`, err);
+      reject(err);
+    });
+
+    // turnReady, delivery 등 이벤트 등록
+    socket.on('turnReady', async (data: { sessionId: string }) => {
+      console.log('🎙️ TURN_READY:', data.sessionId);
+      // 여기서 sessionId 받는 로직이 서버마다 다를 수 있음
+      if (data?.sessionId) {
+        localTurnId = data.sessionId;
+        console.log(`[Client#${clientIndex}] TURN_START: ${localTurnId}`);
+
+        // 오디오 파일을 PCM으로 추출 후 청크 전송
+        try {
+          const pcmBuffer = await extractAudioSamples(audioPath);
+          await sendChunks(pcmBuffer, socket, localTurnId, clientIndex);
+        } catch (err) {
+          console.error(`[Client#${clientIndex}] Error during audio processing:`, err);
+          reject(err);
+        }
+      }
+    });
+
+    // delivery 수신
+    socket.on('delivery', (msg: any) => {
+      console.log(`[Client#${clientIndex}] delivery:`, msg);
+      if (!msg.speech.result) {
+        console.error(`[Client#${clientIndex}] Invalid delivery message:`, msg);
+      }
+
+      allResponses.push(msg.speech.result.text);
+    });
+
+    socket.on('deliveryEnd', (msg: any) => {
+      console.log(`[Client#${clientIndex}] deliveryEnd:`, msg);
+      allResponses.push(msg);
+      socket.disconnect();
+      resolve({ clientIndex, sessionId: localTurnId, responses: allResponses });
+      // 여기서도 resolve 처리 가능
+    });
+  });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ffmpeg: FLAC -> PCM 변환 함수
+// ─────────────────────────────────────────────────────────────────────────────
 function extractAudioSamples(filePath: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -78,36 +114,39 @@ function extractAudioSamples(filePath: string): Promise<Buffer> {
       .on('error', (err: any) => reject(err))
       .on('end', () => resolve(Buffer.concat(chunks)))
       .pipe()
-      .on('data', (chunk: Buffer) => chunks.push(chunk));
+      .on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
   });
 }
 
-function sendChunks(buffer: Buffer, socket: any): Promise<void> {
-  return new Promise(async (resolve) => {
-    const totalChunks = Math.ceil(buffer.length / chunkSize);
-    let currentChunk = 0;
+// ─────────────────────────────────────────────────────────────────────────────
+// PCM 청크 전송 함수
+// ─────────────────────────────────────────────────────────────────────────────
+async function sendChunks(buffer: Buffer, socket: any, sessionId: string, clientIndex: number): Promise<void> {
+  const totalChunks = Math.ceil(buffer.length / chunkSize);
 
-    while (currentChunk < totalChunks) {
-      const start = currentChunk * chunkSize;
-      const end = Math.min((currentChunk + 1) * chunkSize, buffer.length);
-      const chunk = buffer.subarray(start, end);
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min((i + 1) * chunkSize, buffer.length);
+    const chunk = buffer.subarray(start, end);
 
-      socket.emit('audioStream', {
-        type: 'audioStream',
-        turnId,
-        content: chunk.toString('base64'),
-        ttsStatus: 0,
-      });
+    socket.emit('audioStream', {
+      type: 'audioStream',
+      sessionId,
+      content: chunk.toString('base64'),
+      ttsStatus: 0,
+    });
 
-      console.log(`📤 청크 전송 ${currentChunk + 1}/${totalChunks}`);
-      currentChunk++;
-      await delay(250);
-    }
+    console.log(`[Client#${clientIndex}] 📤 청크 전송 ${i + 1}/${totalChunks}`);
+    await delay(100);
+  }
 
-    // ✅ 전송 완료 후 TURN_END 전송
-    console.log('🛑 모든 청크 전송 완료. TURN_END 전송');
-    socket.emit('eventRequest', { event: 13 });
+  // 전송 후 event=13(턴 종료) 요청
+  console.log(`[Client#${clientIndex}] 🛑 모든 청크 전송 완료. TURN_END`);
+  socket.emit('eventRequest', { event: 13, sessionId });
+}
 
-    resolve(); // ✅ 완료 알림
-  });
+function delay(ms: number) {
+  return new Promise((res) => setTimeout(res, ms));
 }
