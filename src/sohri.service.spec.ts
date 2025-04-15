@@ -13,7 +13,7 @@ const chunkSize = 3200;
 describe('동시 연결 테스트(4 clients)', () => {
   const audioFile = path.join(__dirname, 'fixtures', 'test-audio.flac');
 
-  const clientsCount = 1;
+  const clientsCount = 4;
   const results: any[] = []; // 모든 클라이언트 결과 모음
 
   it('should handle 4 concurrent clients', async () => {
