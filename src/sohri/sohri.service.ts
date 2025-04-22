@@ -236,7 +236,7 @@ export class SohriService implements OnModuleInit {
       return;
     }
 
-    // 그 외 상태는 무시
+    // 그 외 상태는 무시 (EPD_WAITING, EPD_TIMEOUT 등)
   }
 
   /** STT 요청 큐에 등록 */
@@ -260,27 +260,60 @@ export class SohriService implements OnModuleInit {
 
   private async processBatchSTT() {
     if (this.sttQueue.length === 0) return;
-    const batch = this.sttQueue.splice(0, 16).sort((a, b) => a.sequence - b.sequence);
+
+    // 1) batch 뽑아서 순서대로 정렬
+    const batch = this.sttQueue.splice(0, 16)
+      .sort((a, b) => a.sequence - b.sequence);
+
+    // 2) utteranceId → req 매핑 테이블
+    const reqMap = new Map<string, SttRequest>();
+    for (const req of batch) {
+      const utteranceId = `${req.sessionId}_${req.state.start}-${req.state.end}`;
+      reqMap.set(utteranceId, req);
+    }
+
+    // 3) PCM 잘라내기
     const inputs = batch.map(req => ({
       sessionId: req.sessionId,
-      start: req.state.start, end: req.state.end,
+      start: req.state.start,
+      end: req.state.end,
       pcmBuffer: this.bufferMap.get(req.sessionId)!.readRange(req.state.start, req.state.end),
       sequence: req.sequence,
-      isFinal: req.end === 1
+      isFinal: req.end === 1,
     }));
 
     const ts = Date.now();
-    this.logger.log(`🔊 STT 요청: ${inputs.length}개`);
+    this.logger.log(`🔊 STT 요청: ${inputs.length}개 (batch)`);
+
+    // 4) 보내고 응답 받기
     const results = await this.speechService.sendBatchSpeechResponse(inputs);
     const elapsed = Date.now() - ts;
 
-    // 결과들을 순서대로 보류 -> deliver 시도
-    for (let i = 0; i < results.length; i++) {
-      const { sessionId, result } = results[i];
-      const req = batch[i];
-      this.bufferAndTryDeliver(sessionId, req.sequence, result, req.end, elapsed);
+    // 5) 응답 하나하나 처리
+    for (const { sessionId, result } of results) {
+      const utteranceId = result.speech.id;             // e.g. "4b20…_228-246"
+      const req = reqMap.get(utteranceId);
+      if (!req) {
+        this.logger.warn(`매칭되는 STT 요청을 찾을 수 없습니다: ${utteranceId}`);
+        continue;
+      }
+      this.bufferAndTryDeliver(
+        sessionId,
+        req.sequence,
+        result,
+        req.end,
+        elapsed
+      );
+    }
+
+    // 6) 개수 불일치 쉽게 파악용 로그
+    if (results.length !== batch.length) {
+      this.logger.warn(
+        `요청(${batch.length}) vs 응답(${results.length}) 개수 불일치`
+      );
     }
   }
+
 
   private bufferAndTryDeliver(
     sessionId: string,
