@@ -31,7 +31,7 @@ export class SpeechService {
     const wavData = this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1);
     // fs.writeFileSync(wavPath, wavData);
 
-    const url = this.configService.get<string>('SPEECH_API_URL') || 'http://tiro.mago52.com:9004/speech2text/run';
+    const url = this.configService.get<string>('SPEECH_API_URL') || 'http://rtstt.mago52.com:9004/speech2text/run';
     const form = new FormData();
     form.append('file', fs.createReadStream(wavPath));
 
@@ -86,7 +86,7 @@ export class SpeechService {
       });
     }
 
-    const url = this.configService.get<string>('SPEECH_API_BATCH_URL') || 'http://tiro.mago52.com:9004/speech2text/runs';
+    const url = this.configService.get<string>('SPEECH_API_BATCH_URL') || 'http://rtstt.mago52.com:9004/speech2text/runs';
 
     try {
       const response = await axios.post(url, form, {
