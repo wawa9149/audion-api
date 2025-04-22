@@ -5,10 +5,10 @@ services:
       dockerfile: docker/Dockerfile
     container_name: sohri-api
     ports:
-      - '9149:59149'
+      - '9149:3000'
     volumes:
       - /home/ubuntu/.mago/data/sohri-api/logs:/app/logs
-      - /data/mago-exp/uri:/app/results
+      - /home/ubuntu/.mago/data/sohri-api/results:/app/results
       - ./secrets/.env.enc.key:/app/secrets/.env.enc.key
     environment:
       NODE_ENV: ${NODE_ENV}
@@ -18,10 +18,10 @@ services:
       TEMP_DIR: ${TEMP_DIR}
       WAV_DIR: ${WAV_DIR}
       RESULT_DIR: ${RESULT_DIR}
-    command: npm run start:prod
-    networks:
-      - mago-services
+    command: npm run start:dev
+#     networks:
+#       - mago-services
 
-networks:
-  mago-services:
-    external: true
+# networks:
+#   mago-services:
+#     external: true

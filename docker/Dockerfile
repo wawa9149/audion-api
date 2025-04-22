@@ -3,6 +3,9 @@
 # 1. Node 기반 이미지
 FROM node:18-alpine
 
+# 🛠️ ffmpeg 설치
+RUN apk add --no-cache ffmpeg
+
 # 2. 작업 디렉토리 생성
 WORKDIR /app
 

@@ -7,14 +7,53 @@ import * as FormData from 'form-data';
 import axios from 'axios';
 import { AudioEncoderService } from './audio/audio-encoder.service';
 
+type Env = 'dev' | 'stage' | 'prod';
+
 @Injectable()
 export class SpeechService {
   private readonly logger = new Logger(SpeechService.name);
+
+  // NODE_ENV 값에 따른 기본 URL 매핑
+  private readonly defaultUrls: Record<Env, string> = {
+    dev: 'http://tiro.mago52.com:9004/speech2text/run',
+    stage: 'http://sohri.mago52.com:9004/speech2text/run',
+    prod: 'http://mago-s2t-basic-aws:59004/speech2text/run',
+  };
+  private readonly defaultBatchUrls: Record<Env, string> = {
+    dev: 'http://tiro.mago52.com:9004/speech2text/runs',
+    stage: 'http://sohri.mago52.com:9004/speech2text/runs',
+    prod: 'http://mago-s2t-basic-aws:59004/speech2text/runs',
+  };
 
   constructor(
     private readonly configService: ConfigService,
     private readonly audioEncoder: AudioEncoderService,
   ) { }
+
+  /** 현재 애플리케이션 실행 환경을 'dev'|'stage'|'prod' 로 변환 */
+  private get apiEnv(): Env {
+    const raw = this.configService.get<string>('NODE_ENV')?.toLowerCase();
+    if (raw === 'prod') return 'prod';
+    if (raw === 'stage') return 'stage';
+    return 'dev';
+  }
+
+  /** 단건 STT API URL */
+  private get speechApiUrl(): string {
+    // 환경변수로 직접 지정된 값이 있으면 그걸 쓰고, 없으면 defaultUrls 에서 꺼내고
+    return (
+      this.configService.get<string>('SPEECH_API_URL')
+      ?? this.defaultUrls[this.apiEnv]
+    );
+  }
+
+  /** 배치 STT API URL */
+  private get speechBatchApiUrl(): string {
+    return (
+      this.configService.get<string>('SPEECH_API_BATCH_URL')
+      ?? this.defaultBatchUrls[this.apiEnv]
+    );
+  }
 
   async sendSpeechResponse(
     sessionId: string,
@@ -22,16 +61,17 @@ export class SpeechService {
     startChunk?: number,
     endChunk?: number,
   ) {
-    const resultRoot = process.env.RESULT_DIR || './results';
+    const url = this.speechApiUrl;
+    const resultRoot = this.configService.get<string>('RESULT_DIR') ?? './results';
     const datePath = new Date().toISOString().split('T')[0];
     const targetDir = path.join(resultRoot, datePath, sessionId);
     fs.mkdirSync(targetDir, { recursive: true });
 
-    const wavPath = path.join(targetDir, `${sessionId}_${startChunk ?? '0'}-${endChunk ?? 'end'}.mp3`);
-    const wavData = this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1);
-    // fs.writeFileSync(wavPath, wavData);
+    const filename = `${sessionId}_${startChunk ?? '0'}-${endChunk ?? 'end'}.mp3`;
+    const wavPath = path.join(targetDir, filename);
+    const mp3Data = await this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1);
+    fs.writeFileSync(wavPath, mp3Data);
 
-    const url = this.configService.get<string>('SPEECH_API_URL') || 'http://tiro.mago52.com:9004/speech2text/run';
     const form = new FormData();
     form.append('file', fs.createReadStream(wavPath));
 
@@ -45,7 +85,6 @@ export class SpeechService {
       });
 
       this.logger.log(`Speech response: ${JSON.stringify(response.data)}`);
-
       fs.unlinkSync(wavPath);
       fs.rmdirSync(targetDir, { recursive: true });
 
@@ -65,28 +104,27 @@ export class SpeechService {
     start: number;
     end: number;
   }[]): Promise<{ sessionId: string; result: any }[]> {
-    const resultRoot = process.env.RESULT_DIR || './results';
+    const url = this.speechBatchApiUrl;
+    const resultRoot = this.configService.get<string>('RESULT_DIR') ?? './results';
     const datePath = new Date().toISOString().split('T')[0];
     const targetDir = path.join(resultRoot, datePath);
     fs.mkdirSync(targetDir, { recursive: true });
 
     const form = new FormData();
-    const sessionIdMap = new Map<string, string>(); // utteranceId -> sessionId
+    const sessionIdMap = new Map<string, string>();
 
     for (const { sessionId, pcmBuffer, start, end } of sttInputList) {
       const utteranceId = `${sessionId}_${start}-${end}`;
-      await this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1).then((mp3) => {
-        fs.writeFileSync(`${targetDir}/${utteranceId}.mp3`, mp3);
-      });
+      const mp3Data = await this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1);
+      const filePath = path.join(targetDir, `${utteranceId}.mp3`);
+      fs.writeFileSync(filePath, mp3Data);
 
       sessionIdMap.set(utteranceId, sessionId);
-      form.append('files', fs.createReadStream(`${resultRoot}/${datePath}/${utteranceId}.mp3`), {
+      form.append('files', fs.createReadStream(filePath), {
         filename: `${utteranceId}.mp3`,
         contentType: 'audio/mp3',
       });
     }
-
-    const url = this.configService.get<string>('SPEECH_API_BATCH_URL') || 'http://tiro.mago52.com:9004/speech2text/runs';
 
     try {
       const response = await axios.post(url, form, {
@@ -98,28 +136,20 @@ export class SpeechService {
       });
 
       const utterances = response.data.content.result.utterances || [];
-
-      // 매핑 후 반환
-      const results = utterances.map((u: any) => {
-        const id: string = u.id; // eg. 428ba20e-7b58-xxxx_xx-xx
-        const sessionId = sessionIdMap.get(id);
-        if (!sessionId) {
-          this.logger.error(`Session ID not found for utterance ID: ${id}`);
-          return null;
-        }
-        return sessionId ? { sessionId, result: { speech: u } } : null;
-      }).filter(Boolean);
+      const results = utterances
+        .map((u: any) => {
+          const sid = sessionIdMap.get(u.id);
+          if (!sid) {
+            this.logger.error(`Session ID not found for utterance ID: ${u.id}`);
+            return null;
+          }
+          return { sessionId: sid, result: { speech: u } };
+        })
+        .filter((x): x is { sessionId: string; result: any } => !!x);
 
       this.logger.log(`Batch STT response: ${JSON.stringify(results)}`);
-
-      // 파일 삭제
-      // for (const { sessionId, start, end } of sttInputList) {
-      //   const utteranceId = `${sessionId}_${start}-${end}`;
-      //   fs.unlinkSync(`${targetDir}/${utteranceId}.mp3`);
-      // }
-
       return results;
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Batch STT 요청 실패: ${err.message}`);
       return [];
     }

@@ -7,6 +7,8 @@ const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || '/usr/bin/ffmpeg');
 
 const SOCKET_URL = 'ws://localhost:3000';
+// const SOCKET_URL = 'ws://rtstt.mago52.com:9149';
+// const SOCKET_URL = 'ws://sohri.mago52.com:9149';
 const SOCKET_PATH = '/ws';
 const chunkSize = 3200;
 const clientsCount = 32;
