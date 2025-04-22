@@ -5,13 +5,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as FormData from 'form-data';
 import axios from 'axios';
-import { pcmToWav } from './utils/pcm-to-wav';
+import { AudioEncoderService } from './audio/audio-encoder.service';
 
 @Injectable()
 export class SpeechService {
   private readonly logger = new Logger(SpeechService.name);
 
-  constructor(private readonly configService: ConfigService) { }
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly audioEncoder: AudioEncoderService,
+  ) { }
 
   async sendSpeechResponse(
     sessionId: string,
@@ -24,9 +27,9 @@ export class SpeechService {
     const targetDir = path.join(resultRoot, datePath, sessionId);
     fs.mkdirSync(targetDir, { recursive: true });
 
-    const wavPath = path.join(targetDir, `${sessionId}_${startChunk ?? '0'}-${endChunk ?? 'end'}.wav`);
-    const wavData = pcmToWav(pcmBuffer, 16000, 1, 16);
-    fs.writeFileSync(wavPath, wavData);
+    const wavPath = path.join(targetDir, `${sessionId}_${startChunk ?? '0'}-${endChunk ?? 'end'}.mp3`);
+    const wavData = this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1);
+    // fs.writeFileSync(wavPath, wavData);
 
     const url = this.configService.get<string>('SPEECH_API_URL') || 'http://tiro.mago52.com:9004/speech2text/run';
     const form = new FormData();
@@ -72,14 +75,14 @@ export class SpeechService {
 
     for (const { sessionId, pcmBuffer, start, end } of sttInputList) {
       const utteranceId = `${sessionId}_${start}-${end}`;
-      const wavData = pcmToWav(pcmBuffer, 16000, 1, 16);
-      const filePath = path.join(targetDir, `${utteranceId}.wav`);
-      fs.writeFileSync(filePath, wavData);
+      await this.audioEncoder.pcmToMp3(pcmBuffer, 16000, 1).then((mp3) => {
+        fs.writeFileSync(`${targetDir}/${utteranceId}.mp3`, mp3);
+      });
 
       sessionIdMap.set(utteranceId, sessionId);
-      form.append('files', fs.createReadStream(filePath), {
-        filename: `${utteranceId}.wav`,
-        contentType: 'audio/wav',
+      form.append('files', fs.createReadStream(`${resultRoot}/${datePath}/${utteranceId}.mp3`), {
+        filename: `${utteranceId}.mp3`,
+        contentType: 'audio/mp3',
       });
     }
 
@@ -100,13 +103,20 @@ export class SpeechService {
       const results = utterances.map((u: any) => {
         const id: string = u.id; // eg. 428ba20e-7b58-xxxx_xx-xx
         const sessionId = sessionIdMap.get(id);
+        if (!sessionId) {
+          this.logger.error(`Session ID not found for utterance ID: ${id}`);
+          return null;
+        }
         return sessionId ? { sessionId, result: { speech: u } } : null;
       }).filter(Boolean);
 
       this.logger.log(`Batch STT response: ${JSON.stringify(results)}`);
 
-      // 정리
-      fs.rmSync(targetDir, { recursive: true, force: true });
+      // 파일 삭제
+      // for (const { sessionId, start, end } of sttInputList) {
+      //   const utteranceId = `${sessionId}_${start}-${end}`;
+      //   fs.unlinkSync(`${targetDir}/${utteranceId}.mp3`);
+      // }
 
       return results;
     } catch (err) {
