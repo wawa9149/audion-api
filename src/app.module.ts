@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SohriModule } from './sohri/sohri.module';
+import { AudioEncoderModule } from './sohri/audio/audio-encoder.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SohriModule } from './sohri/sohri.module';
     //   inject: [ConfigService],
     // }),
     SohriModule,
+    AudioEncoderModule,
   ],
 })
 export class AppModule { }

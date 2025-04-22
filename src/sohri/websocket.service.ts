@@ -29,7 +29,7 @@ export class WebSocketService {
     this.ws.on('message', (msg) => {
       // JSON 파싱
       const parsed = JSON.parse(msg.toString()) as EpdResponse;
-      this.logger.debug(`EPD WebSocket message: ${JSON.stringify(parsed)}`);
+      this.logger.log(`EPD WebSocket message: ${JSON.stringify(parsed)}`);
       this.onEpdMessageCallback?.(parsed);
     });
     this.ws.on('close', () => this.logger.log('EPD WebSocket closed'));

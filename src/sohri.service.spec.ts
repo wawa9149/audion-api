@@ -9,14 +9,14 @@ ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || '/usr/bin/ffmpeg');
 const SOCKET_URL = 'ws://localhost:3000';
 const SOCKET_PATH = '/ws';
 const chunkSize = 3200;
+const clientsCount = 32;
 
-describe('동시 연결 테스트(4 clients)', () => {
+describe(`동시 연결 테스트(${clientsCount} clients)`, () => {
   const audioFile = path.join(__dirname, 'fixtures', 'test-audio.flac');
 
-  const clientsCount = 1;
   const results: any[] = []; // 모든 클라이언트 결과 모음
 
-  it('should handle 4 concurrent clients', async () => {
+  it(`should handle ${clientsCount} concurrent clients`, async () => {
     // 1) 소켓 4개 생성
     const clientPromises = Array.from({ length: clientsCount }, (_, i) =>
       runSingleClientTest(i, audioFile)
@@ -84,11 +84,11 @@ async function runSingleClientTest(clientIndex: number, audioPath: string): Prom
     // delivery 수신
     socket.on('delivery', (msg: any) => {
       console.log(`[Client#${clientIndex}] delivery:`, msg);
-      if (!msg.speech.result) {
+      if (!msg.result.speech.text) {
         console.error(`[Client#${clientIndex}] Invalid delivery message:`, msg);
       }
 
-      allResponses.push(msg.speech.result.text);
+      allResponses.push(msg.result.speech.text);
     });
 
     socket.on('deliveryEnd', (msg: any) => {
