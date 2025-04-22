@@ -236,7 +236,7 @@ export class SohriService implements OnModuleInit {
       return;
     }
 
-    // 그 외 상태는 무시 (EPD_WAITING, EPD_TIMEOUT 등)
+    // 그 외 상태는 무시
   }
 
   /** STT 요청 큐에 등록 */
@@ -260,63 +260,27 @@ export class SohriService implements OnModuleInit {
 
   private async processBatchSTT() {
     if (this.sttQueue.length === 0) return;
-
-    // 1) batch 뽑아서 순서대로 정렬
-    const batch = this.sttQueue.splice(0, 16)
-      .sort((a, b) => a.sequence - b.sequence);
-
-    // 2) utteranceId → SttRequest 맵
-    const reqMap = new Map<string, SttRequest>();
-    for (const req of batch) {
-      const utteranceId = `${req.sessionId}_${req.state.start}-${req.state.end}`;
-      reqMap.set(utteranceId, req);
-    }
-
-    // 3) PCM 준비
+    const batch = this.sttQueue.splice(0, 16).sort((a, b) => a.sequence - b.sequence);
     const inputs = batch.map(req => ({
       sessionId: req.sessionId,
-      start: req.state.start,
-      end: req.state.end,
-      pcmBuffer: this.bufferMap
-        .get(req.sessionId)!
-        .readRange(req.state.start, req.state.end),
+      start: req.state.start, end: req.state.end,
+      pcmBuffer: this.bufferMap.get(req.sessionId)!.readRange(req.state.start, req.state.end),
       sequence: req.sequence,
-      isFinal: req.end === 1,
+      isFinal: req.end === 1
     }));
 
     const ts = Date.now();
-    this.logger.log(`🔊 STT 요청: ${inputs.length}개 (batch)`);
-
-    // 4) STT 엔진 호출
+    this.logger.log(`🔊 STT 요청: ${inputs.length}개`);
     const results = await this.speechService.sendBatchSpeechResponse(inputs);
     const elapsed = Date.now() - ts;
 
-    // 5) ID 매핑해서 deliver
-    for (const { sessionId, result } of results) {
-      // result.speech.id 가 "sessionId_start-end" 이어야 함
-      const utteranceId = result.speech.id;
-      const req = reqMap.get(utteranceId);
-      if (!req) {
-        this.logger.warn(`요청 매핑 실패: ${utteranceId}`);
-        continue;
-      }
-      this.bufferAndTryDeliver(
-        sessionId,
-        req.sequence,
-        result,
-        req.end,
-        elapsed
-      );
-    }
-
-    // 6) 개수 불일치 시 경고
-    if (results.length !== batch.length) {
-      this.logger.warn(
-        `batch(${batch.length}) vs response(${results.length}) 개수 불일치`
-      );
+    // 결과들을 순서대로 보류 -> deliver 시도
+    for (let i = 0; i < results.length; i++) {
+      const { sessionId, result } = results[i];
+      const req = batch[i];
+      this.bufferAndTryDeliver(sessionId, req.sequence, result, req.end, elapsed);
     }
   }
-
 
   private bufferAndTryDeliver(
     sessionId: string,
