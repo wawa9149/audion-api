@@ -176,18 +176,19 @@ export class SohriService implements OnModuleInit {
         // 3) 남은 STT 요청 모두 flush
         await this.processSttRequestsForSession(id);
 
+        // 5) deliveryEnd 전송
+        const sock = this.clientMap.get(id);
+        if (sock) {
+          sock.emit('deliveryEnd', { sessionId: id });
+          this.logger.log(`DeliveryEnd 전송: ${id}`);
+        }
+
         // 4) 통계 로그
         const stats = this.sttStatsMap.get(id);
         if (stats && stats.count > 0) {
           const avg = (stats.totalTime / stats.count).toFixed(2);
           this.logger.log(`[${id}] 🏁 평균처리: ${avg} ms / ${stats.count} 회`);
           this.sttStatsMap.delete(id);
-        }
-
-        // 5) deliveryEnd 전송
-        const sock = this.clientMap.get(id);
-        if (sock) {
-          sock.emit('deliveryEnd', { sessionId: id });
         }
 
         // 6) turn cleanup
