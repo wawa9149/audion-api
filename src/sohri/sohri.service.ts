@@ -265,19 +265,21 @@ export class SohriService implements OnModuleInit {
     const batch = this.sttQueue.splice(0, 16)
       .sort((a, b) => a.sequence - b.sequence);
 
-    // 2) utteranceId → req 매핑 테이블
+    // 2) utteranceId → SttRequest 맵
     const reqMap = new Map<string, SttRequest>();
     for (const req of batch) {
       const utteranceId = `${req.sessionId}_${req.state.start}-${req.state.end}`;
       reqMap.set(utteranceId, req);
     }
 
-    // 3) PCM 잘라내기
+    // 3) PCM 준비
     const inputs = batch.map(req => ({
       sessionId: req.sessionId,
       start: req.state.start,
       end: req.state.end,
-      pcmBuffer: this.bufferMap.get(req.sessionId)!.readRange(req.state.start, req.state.end),
+      pcmBuffer: this.bufferMap
+        .get(req.sessionId)!
+        .readRange(req.state.start, req.state.end),
       sequence: req.sequence,
       isFinal: req.end === 1,
     }));
@@ -285,16 +287,17 @@ export class SohriService implements OnModuleInit {
     const ts = Date.now();
     this.logger.log(`🔊 STT 요청: ${inputs.length}개 (batch)`);
 
-    // 4) 보내고 응답 받기
+    // 4) STT 엔진 호출
     const results = await this.speechService.sendBatchSpeechResponse(inputs);
     const elapsed = Date.now() - ts;
 
-    // 5) 응답 하나하나 처리
+    // 5) ID 매핑해서 deliver
     for (const { sessionId, result } of results) {
-      const utteranceId = result.speech.id;             // e.g. "4b20…_228-246"
+      // result.speech.id 가 "sessionId_start-end" 이어야 함
+      const utteranceId = result.speech.id;
       const req = reqMap.get(utteranceId);
       if (!req) {
-        this.logger.warn(`매칭되는 STT 요청을 찾을 수 없습니다: ${utteranceId}`);
+        this.logger.warn(`요청 매핑 실패: ${utteranceId}`);
         continue;
       }
       this.bufferAndTryDeliver(
@@ -306,10 +309,10 @@ export class SohriService implements OnModuleInit {
       );
     }
 
-    // 6) 개수 불일치 쉽게 파악용 로그
+    // 6) 개수 불일치 시 경고
     if (results.length !== batch.length) {
       this.logger.warn(
-        `요청(${batch.length}) vs 응답(${results.length}) 개수 불일치`
+        `batch(${batch.length}) vs response(${results.length}) 개수 불일치`
       );
     }
   }
