@@ -24,4 +24,8 @@ export class BufferManager {
     this.buffer = Buffer.alloc(0);
     this.baseChunk = 0;
   }
+
+  readAll(): Buffer {
+    return this.buffer;
+  }
 }
