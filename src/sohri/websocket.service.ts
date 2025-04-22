@@ -23,6 +23,7 @@ export class WebSocketService {
       this.logger.debug('EPD WebSocket already connected');
       return;
     }
+    this.logger.log(`Connecting to EPD WebSocket: ${this.configService.get<string>('WS_URL')}`);
     this.ws = new WebSocket(this.configService.get<string>('WS_URL'));
     this.ws.on('error', (err) => this.logger.error('WebSocket error', err.message));
     this.ws.on('open', () => this.logger.log('EPD WebSocket connected'));

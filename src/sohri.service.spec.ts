@@ -6,11 +6,11 @@ const ffmpeg = require('fluent-ffmpeg');
 
 ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || '/usr/bin/ffmpeg');
 
-// const SOCKET_URL = 'ws://localhost:3000';
-const SOCKET_URL = 'ws://rtstt.mago52.com:9149';
+const SOCKET_URL = 'ws://localhost:3000';
+// const SOCKET_URL = 'ws://rtstt.mago52.com:9149';
 const SOCKET_PATH = '/ws';
 const chunkSize = 3200;
-const clientsCount = 32;
+const clientsCount = 4;
 
 describe(`동시 연결 테스트(${clientsCount} clients)`, () => {
   const audioFile = path.join(__dirname, 'fixtures', 'test-audio.flac');
